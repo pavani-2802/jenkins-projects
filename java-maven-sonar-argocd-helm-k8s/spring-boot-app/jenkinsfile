@@ -42,16 +42,7 @@ pipeline {
      stage('Build and Push Docker Image') {
         steps {
             script {
-                  sh '''
-            if command -v docker &> /dev/null
-            then
-                echo "Docker CLI found. Proceeding with build."
-                docker --version
-            else
-                echo "Docker CLI NOT found in PATH. Check Jenkins agent configuration (args '-v /var/run/docker.sock...')."
-                exit 1
-            fi
-            '''
+                   sh 'docker --version' 
                 // Ensure DOCKER_IMAGE is defined somewhere (e.g. in an 'environment' block at the top level or within the script)
                 // For example: def DOCKER_IMAGE = "pavanif5/jenkins-projects:${env.BUILD_NUMBER}"
 
