@@ -1,24 +1,32 @@
 pipeline {
 
-     agent { 
+   agent { 
        docker { 
            image 'maven:3.8.1-openjdk-17' 
-     } 
+           // You still need to add this argument for Docker access within the container
+           // args '-v /var/run/docker.sock:/var/run/docker.sock'
+       } 
    }
-  stages {
+   
+   stages {
+    
+    // --- STAGE 1: Checkout (Assuming Jenkins handles the clone automatically) ---
     stage('Checkout') {
       steps {
         sh 'echo passed'
         //git branch: 'main', url: 'https://github.com/pavani-2802/jenkins-projects.git'
       }
     }
+    
+    // --- STAGE 2: Build and Test ---
     stage('Build and Test') {
       steps {
         sh 'ls -ltra'
-        // build the project and create a JAR file
         sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn clean package'
       }
     }
+    
+    // --- STAGE 3: Static Code Analysis ---
      stage('Static Code Analysis') {
       environment {
         SONAR_URL = "http://192.168.41.130:9000"
@@ -29,24 +37,28 @@ pipeline {
         }
       }
     }
+    
+    // --- STAGE 4: Build and Push Docker Image (Combined and Corrected) ---
      stage('Build and Push Docker Image') {
         steps {
             script {
-                docker.withRegistry('https://registry.hub.docker.com', 'docker-hub-login') {
-              }
+                // Ensure DOCKER_IMAGE is defined somewhere (e.g. in an 'environment' block at the top level or within the script)
+                // For example: def DOCKER_IMAGE = "pavanif5/jenkins-projects:${env.BUILD_NUMBER}"
+
+                // 1. Build the image
+                sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && docker build -t ${DOCKER_IMAGE} .'
+                
+                // 2. Push the image using correct registry credentials
+                def dockerImage = docker.image("${DOCKER_IMAGE}")
+                // Use the correct credentials ID you created earlier (e.g., 'docker-hub-login')
+                docker.withRegistry('https://index.docker.io/v1/', "docker-hub-login") { 
+                    dockerImage.push()
+                }
             }
         }
     }
-      steps {
-        script {
-            sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && docker build -t ${DOCKER_IMAGE} .'
-            def dockerImage = docker.image("${DOCKER_IMAGE}")
-            docker.withRegistry('https://index.docker.io/v1/', "docker-cred") {
-                dockerImage.push()
-            }
-        }
-      }
-    }
+    
+    // --- STAGE 5: Update Deployment File ---
     stage('Update Deployment File') {
         environment {
             GIT_REPO_NAME = "jenkins-projects"
@@ -66,4 +78,5 @@ pipeline {
             }
         }
     }
-}
+  } 
+} 
