@@ -4,7 +4,7 @@ pipeline {
        docker { 
            image 'maven:3.8.1-openjdk-17' 
            // You still need to add this argument for Docker access within the container
-           // args '-v /var/run/docker.sock:/var/run/docker.sock'
+           args '-v /var/run/docker.sock:/var/run/docker.sock'
        } 
    }
    
