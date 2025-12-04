@@ -1,0 +1,22 @@
+node {
+    stage('Deploy Service') {
+        script {
+            def serviceYaml = """
+apiVersion: v1
+kind: Service
+metadata:
+  name: spring-boot-app-service
+labels:
+    app: spring-boot-app
+spec:
+  selector:
+    app: spring-boot-app
+  type: LoadBalancer 
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+"""
+     }
+  }
+}
