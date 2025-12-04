@@ -37,7 +37,7 @@ pipeline {
             }
         }
     }
-      steps 
+      steps {
         script {
             sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && docker build -t ${DOCKER_IMAGE} .'
             def dockerImage = docker.image("${DOCKER_IMAGE}")
@@ -47,7 +47,7 @@ pipeline {
         }
       }
     }
-    stage ('Update Deployment File') {
+    stage('Update Deployment File') {
         environment {
             GIT_REPO_NAME = "jenkins-projects"
             GIT_USER_NAME = "pavani-2802"
