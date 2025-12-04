@@ -1,6 +1,9 @@
 pipeline {
 
      agent { 
+           tool {
+              jdk 'JDK-17'
+      }
        docker { 
            image 'maven:3.8.1-openjdk-11' 
      } 
