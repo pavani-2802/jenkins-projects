@@ -27,8 +27,6 @@
     GITHUB_TOKEN_ID    = 'github'          // string token
   }
 
-  stages {
-
     stage('Checkout') {
       steps {
         // ensure the repo/branch is checked out so later git push works
@@ -83,7 +81,7 @@
 
     stage('Push Docker Image') {
       steps {
-        withCredentials([usernamePassword(credentialsId: env.DOCKER_REG_CRED_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PSW')]) {
+                 withCredentials([usernamePassword(credentialsId: env.DOCKER_REG_CRED_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PSW')]) {
           script {
             sh '''
               echo "$DOCKER_PSW" | docker login -u "$DOCKER_USER" --password-stdin
@@ -97,7 +95,7 @@
 
     stage('Update Deployment File') {
       steps {
-        withCredentials([string(credentialsId: env.GITHUB_TOKEN_ID, variable: 'GITHUB_TOKEN')]) {
+                 withCredentials([string(credentialsId: env.GITHUB_TOKEN_ID, variable: 'GITHUB_TOKEN')]) {
           script {
             // Update deployment file only if tag/BUILD_NUMBER placeholder exists
             dir('.') {
