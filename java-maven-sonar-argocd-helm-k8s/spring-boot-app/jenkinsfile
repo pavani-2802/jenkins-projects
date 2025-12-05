@@ -106,7 +106,7 @@ pipeline {
             builtImage.push()
             
             // Tag and push latest
-            def latestImageName = "${env.DOCKER_IMAGE%:*}:latest"
+            def latestImageName = "${env.DOCKER_IMAGE}:latest"
             builtImage.tag(latestImageName)
             builtImage.push(latestImageName)
           }
