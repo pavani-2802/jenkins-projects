@@ -2,22 +2,25 @@ pipeline {
   agent {
     docker {
       image 'my-maven-docker:latest'
-      // Use 'args' for mounting the socket and specifying the user as root (UID 0)
-      args '--user 0:0 -v /var/run/docker.sock:/var/run/docker.sock' 
+      // Mount Docker socket for communication. The Jenkins agent user will be set automatically 
+      // by the plugin to match the host's Jenkins user, resolving permission errors.
+      args '-v /var/run/docker.sock:/var/run/docker.sock' 
     }
   }
   
+  // Define global environment variables
   environment {
       DOCKER_IMAGE = "pavanif5/jenkins-projects:${BUILD_NUMBER}"
       SONAR_CRED_ID = 'sonarqube'
       DOCKER_CRED_ID = 'docker-cred'
       GITHUB_CRED_ID = 'github'
-      DOCKER_API_VERSION = '1.41' 
+      DOCKER_API_VERSION = '1.41' // Forces Docker client to use API version 1.41
   }
 
   stages {
     stage('Checkout') {
       steps {
+        // cleanWs() // Optional: Uncomment this line if permission errors persist
         checkout scm
       }
     }
@@ -26,7 +29,7 @@ pipeline {
       steps {
         sh 'echo "Current directory contents:"'
         sh 'ls -ltra'
-        // Specify the path to the pom.xml file using the -f flag
+        // FIX: Specify the path to the pom.xml file using the -f flag
         sh 'mvn clean package -f java-maven-sonar-argocd-helm-k8s/spring-boot-app/pom.xml' 
       }
     }
@@ -37,6 +40,7 @@ pipeline {
       }
       steps {
         withCredentials([string(credentialsId: env.SONAR_CRED_ID, variable: 'SONAR_AUTH_TOKEN')]) {
+          // Analyze using the correct POM path
           sh 'mvn sonar:sonar -Dsonar.login=$SONAR_AUTH_TOKEN -Dsonar.host.url=${SONAR_URL} -f java-maven-sonar-argocd-helm-k8s/spring-boot-app/pom.xml'
         }
       }
@@ -45,9 +49,10 @@ pipeline {
     stage('Build and Push Docker Image') {
       steps {
         script {
+            // Build the image using the correct paths for Dockerfile and context
             sh 'docker build -t ${DOCKER_IMAGE} -f java-maven-sonar-argocd-helm-k8s/spring-boot-app/Dockerfile java-maven-sonar-argocd-helm-k8s/spring-boot-app/'
             
-            // --- FIXED LINE BELOW: Added https:// protocol ---
+            // FIX: Added 'https://' prefix to the registry URL
             docker.withRegistry('index.docker.io', env.DOCKER_CRED_ID) {
                 docker.image("${DOCKER_IMAGE}").push()
             }
@@ -69,10 +74,12 @@ pipeline {
                     git config user.name "PavaniKethari28"
                     
                     DEPLOY_FILE="java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml"
+                    # Use double quotes for sed to allow variable expansion
                     sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" $DEPLOY_FILE
                     
                     git add $DEPLOY_FILE
                     git commit -m "Update deployment image to version ${BUILD_NUMBER}"
+                    # Use HTTPS URL with token authentication for push
                     git push https://${GITHUB_TOKEN}@github.com{GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:main
                 '''
             }
