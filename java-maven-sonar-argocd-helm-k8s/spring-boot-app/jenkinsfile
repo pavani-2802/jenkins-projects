@@ -5,6 +5,12 @@
       args '--user root -v /var/run/docker.sock:/var/run/docker.sock' // mount Docker socket to access the host's Docker daemon
     }
   }
+  
+  // Define Docker image name globally if desired, or keep it in the stage env block
+  environment {
+      DOCKER_IMAGE = "pavanif5/jenkins-projects:${BUILD_NUMBER}"
+  }
+
   stages {
     stage('Checkout') {
       steps {
@@ -12,6 +18,7 @@
         //git branch: 'main', url: 'https://github.com/pavani-2802/Jenkins-Projects.git'
       }
     }
+    
     stage('Build and Test') {
       steps {
         sh 'ls -ltra'
@@ -19,6 +26,7 @@
         sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn clean package'
       }
     }
+    
     stage('Static Code Analysis') {
       environment {
         SONAR_URL = "http://192.168.41.130:9000"
@@ -29,27 +37,32 @@
         }
       }
     }
+    
     stage('Build and Push Docker Image') {
-        steps {
+      // The environment block is moved outside of the steps block and the nested 'steps' block is removed
       environment {
-        DOCKER_IMAGE = "pavanif5/jenkins-projects:${BUILD_NUMBER}"
         // DOCKERFILE_LOCATION = "java-maven-sonar-argocd-helm-k8s/spring-boot-app/Dockerfile"
-        REGISTRY_CREDENTIALS = credentials('docker-cred')
+        // REGISTRY_CREDENTIALS = credentials('docker-cred') // Moved into withRegistry call
       }
-
       steps {
         script {
             sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && docker build -t ${DOCKER_IMAGE} .'
+            
+            // Using docker DSL requires Jenkins Docker Pipeline plugin configuration
             def dockerImage = docker.image("${DOCKER_IMAGE}")
-             withEnv(["DOCKER_API_VERSION=1.41"]) {
-            docker.withRegistry('https://index.docker.io/v1/', "docker-cred") {
-                dockerImage.push()
-               sh 'docker push docker.io/pavanif5/jenkins-projects:139'
+            
+            withEnv(["DOCKER_API_VERSION=1.41"]) {
+                // Ensure 'docker-cred' is the correct Jenkins credentials ID for Docker Hub U/P
+                docker.withRegistry('https://index.docker.io/v1/', "docker-cred") {
+                    dockerImage.push()
+                    // The following line is redundant as dockerImage.push() already pushes the image defined by DOCKER_IMAGE
+                    // sh 'docker push docker.io/pavanif5/jenkins-projects:139' 
+                }
             }
         }
       }
     }
-
+    
     stage('Update Deployment File') {
         environment {
             GIT_REPO_NAME = "jenkins-Projects"
@@ -61,16 +74,15 @@
                 sh '''
                     git config user.email "pavanikethari.28@gmail.com"
                     git config user.name "PavaniKethari28"
-                    BUILD_NUMBER=${BUILD_NUMBER}
+                    # BUILD_NUMBER is already an environment variable, no need to redefine it
                     sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
                     git add java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
                     git commit -m "Update deployment image to version ${BUILD_NUMBER}"
+                    # Use the environment variables defined in the stage block
                     git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
                 '''
             }
         }
     }
   }
-}
-}
 }
