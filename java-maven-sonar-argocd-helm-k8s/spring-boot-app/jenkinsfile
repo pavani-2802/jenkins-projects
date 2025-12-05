@@ -1,12 +1,23 @@
 pipeline {
-
-  agent any
+  agent {
     docker { 
           image 'my-maven-docker:latest'
+           label 'docker-build' // You might need a label if you use dedicated agents
       // mount socket and set Docker config to /tmp/.docker (writable)
       args  '-v /var/run/docker.sock:/var/run/docker.sock --group-add 1000 -e DOCKER_CONFIG=/tmp/.docker'
     }
   }    
+}
+   stages { 
+        
+        stage('Build Project') {
+            steps {
+                echo 'Building using Maven inside the Docker container...'
+                sh 'mvn clean package' 
+                // This command runs *inside* the maven:3-openjdk-17 container
+            }
+        }
+    }
   environment {
     // Define docker image name (change registry/namespace as required)
     DOCKER_IMAGE = "pavanif5/jenkins-projects:${env.BUILD_NUMBER}"
