@@ -1,63 +1,74 @@
 pipeline {
+  // Ensure the agent can handle cleanup gracefully
   agent {
     docker {
       image 'my-maven-docker:latest'
-      // Mount Docker socket for communication. The Jenkins agent user will be set automatically 
-      // by the plugin to match the host's Jenkins user, resolving permission errors.
+      // Mounting the socket is useful for building Docker images within the container (Docker-in-Docker pattern using host daemon)
       args '-v /var/run/docker.sock:/var/run/docker.sock'
+      // Set the working directory explicitly to ensure consistency
+      // The 'user' parameter here can align the container's user with the host's user if needed, but the current setup implicitly handles it with the args above.
     }
   }
+
+  // Use a 'tools' block to automatically install and configure Maven if needed via Jenkins admin settings
+  // tools {
+  //   maven 'Maven 3.8.1' // Name of the Maven installation configured in Manage Jenkins
+  // }
   
   environment {
       DOCKER_IMAGE = "pavanif5/jenkins-projects:${BUILD_NUMBER}"
       SONAR_CRED_ID = 'sonarqube'
       DOCKER_CRED_ID = 'docker-cred'
       GITHUB_CRED_ID = 'github'
-      DOCKER_API_VERSION = '1.41' // Forces Docker client to use API version 1.41
+      // DOCKER_API_VERSION = '1.41' // This usually isn't necessary unless you have a specific compatibility issue
       POM_PATH = 'java-maven-sonar-argocd-helm-k8s/spring-boot-app/pom.xml'
       APP_DIR = 'java-maven-sonar-argocd-helm-k8s/spring-boot-app'
-    }
+  }
+
+  // The options block is a standard place to put workspace management settings
+  options {
+      // Use this if you want to ensure the entire workspace is wiped clean before the pipeline runs, 
+      // which eliminates almost all permission issues from previous builds.
+      // skipDefaultCheckout() // Only use this if you manually call 'checkout scm' in the first stage
+      // The below cleans before the SCM checkout
+      // cleanWs(disableDeferredWipeout: true, internal: true) // Requires Workspace Cleanup Plugin
+  }
 
   stages {
-    stage('Prepare workspace') {
+    // Moved the proactive cleanup commands into an 'initial cleanup' stage.
+    // The previous 'Prepare workspace' stage was using 'script' unnecessarily.
+    stage('Initial Cleanup') {
       steps {
-        script {
-          sh '''#!/bin/bash
-            set +e
-            echo "Workspace: ${WORKSPACE}"
-            echo "Listing workspace root for debugging:"
-            ls -la "${WORKSPACE}" || true
-
-            echo "Removing stale sonar output if present (avoid mvn clean failure)"
-            rm -rf "${WORKSPACE}/${APP_DIR}/target/sonar" || true
-
-            echo "Attempting to make workspace writable by current user (best-effort)"
-            chown -R $(id -u):$(id -g) "${WORKSPACE}" >/dev/null 2>&1 || true
-            chmod -R u+rwX "${WORKSPACE}" || true
-
-            echo "Prepare step done"
-          '''
-        }
+        sh '''#!/bin/bash
+          echo "Removing stale sonar output if present (avoid mvn clean failure)"
+          rm -rf "${WORKSPACE}/${APP_DIR}/target/sonar" || true
+          
+          # Forcefully clean the main target directory before any checkout happens
+          rm -rf "${WORKSPACE}/${APP_DIR}/target" || true 
+        '''
       }
     }
 
     stage('Checkout') {
       steps {
-        // cleanWs() // Optional: enable if you have Workspace Cleanup plugin and want a fresh workspace
         checkout scm
       }
     }
 
     stage('Build and Test') {
+      // Best practice is to cd into the application directory when running maven commands
+      // to respect relative paths in the POM if any exist.
+      // We also ensure the user running mvn is the correct one using chown prior to the command.
       steps {
         sh '''#!/bin/bash
           set -e
-          echo "Current directory contents:"
-          ls -ltra
-          echo "Running mvn clean package (POM path: ${POM_PATH})"
-          # ensure stale sonar removed just before mvn as extra safety
-          rm -rf "${WORKSPACE}/${APP_DIR}/target/sonar" || true
-          mvn -B -f "${POM_PATH}" clean package
+          echo "Ensuring ownership of app directory before build:"
+          chown -R $(id -u):$(id -g) "${WORKSPACE}/${APP_DIR}" || true
+
+          cd "${WORKSPACE}/${APP_DIR}"
+          echo "Running mvn clean package"
+          # Maven's own 'clean' phase *should* handle the deletion now that ownership is correct.
+          mvn -B clean package
         '''
       }
     }
@@ -70,11 +81,10 @@ pipeline {
         withCredentials([string(credentialsId: env.SONAR_CRED_ID, variable: 'SONAR_AUTH_TOKEN')]) {
           sh '''#!/bin/bash
             set -e
-            echo "Removing any stale sonar dir before analysis"
-            rm -rf "${WORKSPACE}/${APP_DIR}/target/sonar" || true
-
-            echo "Running Sonar analysis (POM path: ${POM_PATH})"
-            mvn -B -f "${POM_PATH}" sonar:sonar -Dsonar.login=${SONAR_AUTH_TOKEN} -Dsonar.host.url="${SONAR_URL}"
+            cd "${WORKSPACE}/${APP_DIR}"
+            echo "Running Sonar analysis"
+            # We don't need the -f flag here anymore because we cd'ed into the directory
+            mvn -B sonar:sonar -Dsonar.login=${SONAR_AUTH_TOKEN} -Dsonar.host.url="${SONAR_URL}"
           '''
         }
       }
@@ -85,18 +95,20 @@ pipeline {
         script {
           sh '''#!/bin/bash
             set -e
+            # Use the correct relative path for the docker build context
             echo "Building docker image ${DOCKER_IMAGE} from ${APP_DIR}"
             docker build -t "${DOCKER_IMAGE}" -f "${APP_DIR}/Dockerfile" "${APP_DIR}"
           '''
-          // Push using withRegistry to ensure proper credential usage and protocol
+          // Use the built-in Jenkins Docker DSL for better integration
           docker.withRegistry('https://index.docker.io/v1/', env.DOCKER_CRED_ID) {
-            // push the build-number-tagged image
-            sh "docker push ${env.DOCKER_IMAGE}"
-            // optionally tag and push latest
-            sh '''
-              docker tag "${DOCKER_IMAGE}" "${DOCKER_IMAGE%:*}:latest" || true
-              docker push "${DOCKER_IMAGE%:*}:latest" || true
-            '''
+            // Push the build-number-tagged image first
+            def builtImage = docker.image(env.DOCKER_IMAGE)
+            builtImage.push()
+            
+            // Tag and push latest
+            def latestImageName = "${env.DOCKER_IMAGE%:*}:latest"
+            builtImage.tag(latestImageName)
+            builtImage.push(latestImageName)
           }
         }
       }
@@ -107,7 +119,7 @@ pipeline {
             GIT_REPO_NAME = "jenkins-projects"
             GIT_USER_NAME = "pavani-2802"
             GIT_USER_EMAIL = "pavanikethari.28@gmail.com"
-            DEPLOY_FILE = "java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml"
+            DEPLOY_FILE_PATH = "${WORKSPACE}/java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml"
         }
 
         steps {
@@ -117,14 +129,15 @@ pipeline {
                   git config user.email "${GIT_USER_EMAIL}"
                   git config user.name "${GIT_USER_NAME}"
 
-                  echo "Updating image tag in ${DEPLOY_FILE}"
-                  sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" "${DEPLOY_FILE}"
+                  echo "Updating image tag in ${DEPLOY_FILE_PATH}"
+                  # Use the environment variable for the file path consistently
+                  sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" "${DEPLOY_FILE_PATH}"
 
                   # Only commit if there are changes
-                  if git diff --quiet -- "${DEPLOY_FILE}"; then
-                    echo "No changes to ${DEPLOY_FILE}; skipping commit/push"
+                  if git diff --quiet -- "${DEPLOY_FILE_PATH}"; then
+                    echo "No changes to ${DEPLOY_FILE_PATH}; skipping commit/push"
                   else
-                    git add "${DEPLOY_FILE}"
+                    git add "${DEPLOY_FILE_PATH}"
                     git commit -m "Update deployment image to version ${BUILD_NUMBER}"
                     echo "Pushing changes using token-authenticated HTTPS URL"
                     git push "https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git" HEAD:main
@@ -134,16 +147,19 @@ pipeline {
         }
     }
   }
-
+  // The post section diagnostics are good and can remain mostly as is.
   post {
     always {
       echo "Listing target directory contents for debugging (if exists)"
       sh '''#!/bin/bash
         ls -la "${WORKSPACE}/${APP_DIR}/target" || true
       '''
+      // Add a cleanup at the *end* as well, just to be thorough for the *next* build
+      sh "rm -rf ${WORKSPACE}/${APP_DIR}/target || true"
     }
     failure {
       echo "Build failed — printing ownership and lock diagnostics"
+      // The failure block checks remain excellent diagnostics for permission issues
       sh '''#!/bin/bash
         echo "Target folder listing:"
         ls -la "${WORKSPACE}/${APP_DIR}/target" || true
@@ -153,11 +169,18 @@ pipeline {
           ls -la "${WORKSPACE}/${APP_DIR}/target/sonar" || true
         fi
 
+        # The following commands depend on system tools availability
         if command -v lsof >/dev/null 2>&1; then
           echo "Processes holding sonar report (if present):"
           lsof "${WORKSPACE}/${APP_DIR}/target/sonar/report-task.txt" || true
         else
-          echo "lsof not available on this agent"
+          echo "lsof or similar lock detection tools not available on this agent"
+        fi
+        
+        # Print who owns the problematic file specifically if it exists
+        if [ -f "${WORKSPACE}/${APP_DIR}/target/sonar/report-task.txt" ]; then
+            echo "Ownership of report-task.txt:"
+            ls -l "${WORKSPACE}/${APP_DIR}/target/sonar/report-task.txt"
         fi
       '''
     }
