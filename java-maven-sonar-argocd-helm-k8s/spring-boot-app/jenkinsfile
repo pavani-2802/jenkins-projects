@@ -111,8 +111,6 @@ pipeline {
       }
     }
 
-  } // stages
-
   post {
     always {
       echo "Build finished. Showing local images and workspace snapshot."
