@@ -26,13 +26,12 @@ pipeline {
   }
 
   // The options block is a standard place to put workspace management settings
-  options {
+  options
       // Use this if you want to ensure the entire workspace is wiped clean before the pipeline runs, 
       // which eliminates almost all permission issues from previous builds.
       // skipDefaultCheckout() // Only use this if you manually call 'checkout scm' in the first stage
       // The below cleans before the SCM checkout
       // cleanWs(disableDeferredWipeout: true, internal: true) // Requires Workspace Cleanup Plugin
-  }
 
   stages {
     // Moved the proactive cleanup commands into an 'initial cleanup' stage.
