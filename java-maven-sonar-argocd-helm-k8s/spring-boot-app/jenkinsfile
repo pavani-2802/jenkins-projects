@@ -30,6 +30,7 @@
       }
     }
     stage('Build and Push Docker Image') {
+        steps {
       environment {
         DOCKER_IMAGE = "pavanif5/jenkins-projects:${BUILD_NUMBER}"
         // DOCKERFILE_LOCATION = "java-maven-sonar-argocd-helm-k8s/spring-boot-app/Dockerfile"
