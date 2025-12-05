@@ -1,7 +1,7 @@
 pipeline {
 
   agent {
-       stage {
+       stage('Build') { 
     docker {
       image 'my-maven-docker:latest'
       // mount socket and set Docker config to /tmp/.docker (writable)
