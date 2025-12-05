@@ -2,28 +2,36 @@
   agent {
     docker {
       image 'my-maven-docker:latest'
-      args '--user root -v /var/run/docker.sock:/var/run/docker.sock' // mount Docker socket to access the host's Docker daemon
+      // Mount Docker socket and explicitly use the 'docker' group for permissions
+      args '-v /var/run/docker.sock:/var/run/docker.sock --group root' 
     }
   }
   
-  // Define Docker image name globally if desired, or keep it in the stage env block
   environment {
       DOCKER_IMAGE = "pavanif5/jenkins-projects:${BUILD_NUMBER}"
+      // Define all credential IDs here for clarity
+      SONAR_CRED_ID = 'sonarqube'
+      DOCKER_CRED_ID = 'docker-cred'
+      GITHUB_CRED_ID = 'github'
+      // Set the required API version globally
+      DOCKER_API_VERSION = '1.41' 
   }
 
   stages {
     stage('Checkout') {
       steps {
-        sh 'echo passed'
-        //git branch: 'main', url: 'https://github.com/pavani-2802/Jenkins-Projects.git'
+        // Use the built-in Jenkins step for robust SCM checkout
+        // Assumes the repo is the one the pipeline job is configured for
+        checkout scm
       }
     }
     
     stage('Build and Test') {
       steps {
+        sh 'echo "Current directory contents:"'
         sh 'ls -ltra'
-        // build the project and create a JAR file
-        sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn clean package'
+        // Run commands relative to the workspace root
+        sh 'mvn clean package' 
       }
     }
     
@@ -32,32 +40,23 @@
         SONAR_URL = "http://192.168.41.130:9000"
       }
       steps {
-        withCredentials([string(credentialsId: 'sonarqube', variable: 'SONAR_AUTH_TOKEN')]) {
-          sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn sonar:sonar -Dsonar.login=$SONAR_AUTH_TOKEN -Dsonar.host.url=${SONAR_URL}'
+        withCredentials([string(credentialsId: env.SONAR_CRED_ID, variable: 'SONAR_AUTH_TOKEN')]) {
+          // Pass directory as a parameter to the command instead of 'cd'
+          sh 'mvn sonar:sonar -Dsonar.login=$SONAR_AUTH_TOKEN -Dsonar.host.url=${SONAR_URL} -f java-maven-sonar-argocd-helm-k8s/spring-boot-app/pom.xml'
         }
       }
     }
     
     stage('Build and Push Docker Image') {
-      // The environment block is moved outside of the steps block and the nested 'steps' block is removed
-      environment {
-        // DOCKERFILE_LOCATION = "java-maven-sonar-argocd-helm-k8s/spring-boot-app/Dockerfile"
-        // REGISTRY_CREDENTIALS = credentials('docker-cred') // Moved into withRegistry call
-      }
       steps {
         script {
-            sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && docker build -t ${DOCKER_IMAGE} .'
+            // Build the image using the relative Dockerfile location
+            sh 'docker build -t ${DOCKER_IMAGE} -f java-maven-sonar-argocd-helm-k8s/spring-boot-app/Dockerfile java-maven-sonar-argocd-helm-k8s/spring-boot-app/'
             
-            // Using docker DSL requires Jenkins Docker Pipeline plugin configuration
-            def dockerImage = docker.image("${DOCKER_IMAGE}")
-            
-            withEnv(["DOCKER_API_VERSION=1.41"]) {
-                // Ensure 'docker-cred' is the correct Jenkins credentials ID for Docker Hub U/P
-                docker.withRegistry('https://index.docker.io/v1/', "docker-cred") {
-                    dockerImage.push()
-                    // The following line is redundant as dockerImage.push() already pushes the image defined by DOCKER_IMAGE
-                    // sh 'docker push docker.io/pavanif5/jenkins-projects:139' 
-                }
+            // Use docker.withRegistry with the defined credentials ID
+            docker.withRegistry('index.docker.io', env.DOCKER_CRED_ID) {
+                // Push the specific image tag defined globally
+                docker.image("${DOCKER_IMAGE}").push()
             }
         }
       }
@@ -65,21 +64,27 @@
     
     stage('Update Deployment File') {
         environment {
-            GIT_REPO_NAME = "jenkins-Projects"
+            GIT_REPO_NAME = "jenkins-Projects" // Verify this capitalization matches GitHub
             GIT_USER_NAME = "pavani-2802"
+            GIT_USER_EMAIL = "pavanikethari.28@gmail.com"
         }
 
         steps {
-            withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
+            withCredentials([string(credentialsId: env.GITHUB_CRED_ID, variable: 'GITHUB_TOKEN')]) {
                 sh '''
-                    git config user.email "pavanikethari.28@gmail.com"
+                    # Configure git within the workspace
+                    git config user.email "${GIT_USER_EMAIL}"
                     git config user.name "PavaniKethari28"
-                    # BUILD_NUMBER is already an environment variable, no need to redefine it
-                    sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-                    git add java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
+                    
+                    # Update YAML file in place
+                    DEPLOY_FILE="java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml"
+                    sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" $DEPLOY_FILE
+                    
+                    # Commit and Push
+                    git add $DEPLOY_FILE
                     git commit -m "Update deployment image to version ${BUILD_NUMBER}"
-                    # Use the environment variables defined in the stage block
-                    git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
+                    # Use HTTPS URL with token authentication
+                    git push https://${GITHUB_TOKEN}@github.com{GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:main
                 '''
             }
         }
