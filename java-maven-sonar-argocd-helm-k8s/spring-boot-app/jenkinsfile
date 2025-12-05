@@ -1,4 +1,4 @@
-pipeline 
+node {
   agent {
     docker { 
           image 'my-maven-docker:latest'
