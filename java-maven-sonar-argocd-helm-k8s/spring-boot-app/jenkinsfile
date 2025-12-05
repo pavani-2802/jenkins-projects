@@ -1,11 +1,12 @@
 pipeline {
-  agent {
+
+  agent any
     docker { 
           image 'my-maven-docker:latest'
       // mount socket and set Docker config to /tmp/.docker (writable)
       args  '-v /var/run/docker.sock:/var/run/docker.sock --group-add 1000 -e DOCKER_CONFIG=/tmp/.docker'
     }
-      
+  }    
   environment {
     // Define docker image name (change registry/namespace as required)
     DOCKER_IMAGE = "pavanif5/jenkins-projects:${env.BUILD_NUMBER}"
