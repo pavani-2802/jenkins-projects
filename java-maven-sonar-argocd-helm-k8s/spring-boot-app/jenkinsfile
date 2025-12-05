@@ -130,3 +130,4 @@ node {
       echo "Build failed — check console logs above for the failing stage."
     }
   }
+}
