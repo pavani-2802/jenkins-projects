@@ -4,33 +4,66 @@ pipeline {
       image 'my-maven-docker:latest'
       // Mount Docker socket for communication. The Jenkins agent user will be set automatically 
       // by the plugin to match the host's Jenkins user, resolving permission errors.
-      args '-v /var/run/docker.sock:/var/run/docker.sock' 
+      args '-v /var/run/docker.sock:/var/run/docker.sock'
     }
   }
   
-  // Define global environment variables
   environment {
       DOCKER_IMAGE = "pavanif5/jenkins-projects:${BUILD_NUMBER}"
       SONAR_CRED_ID = 'sonarqube'
       DOCKER_CRED_ID = 'docker-cred'
       GITHUB_CRED_ID = 'github'
       DOCKER_API_VERSION = '1.41' // Forces Docker client to use API version 1.41
+      POM_PATH = 'java-maven-sonar-argocd-helm-k8s/spring-boot-app/pom.xml'
+      APP_DIR = 'java-maven-sonar-argocd-helm-k8s/spring-boot-app'
+    }
+
+  options {
+    timestamps()
+    ansiColor('xterm')
   }
 
   stages {
+    stage('Prepare workspace') {
+      steps {
+        script {
+          sh '''#!/bin/bash
+            set +e
+            echo "Workspace: ${WORKSPACE}"
+            echo "Listing workspace root for debugging:"
+            ls -la "${WORKSPACE}" || true
+
+            echo "Removing stale sonar output if present (avoid mvn clean failure)"
+            rm -rf "${WORKSPACE}/${APP_DIR}/target/sonar" || true
+
+            echo "Attempting to make workspace writable by current user (best-effort)"
+            chown -R $(id -u):$(id -g) "${WORKSPACE}" >/dev/null 2>&1 || true
+            chmod -R u+rwX "${WORKSPACE}" || true
+
+            echo "Prepare step done"
+          '''
+        }
+      }
+    }
+
     stage('Checkout') {
       steps {
-        // cleanWs() // Optional: Uncomment this line if permission errors persist
+        // cleanWs() // Optional: enable if you have Workspace Cleanup plugin and want a fresh workspace
         checkout scm
       }
     }
-    
+
     stage('Build and Test') {
       steps {
-        sh 'echo "Current directory contents:"'
-        sh 'ls -ltra'
-        // FIX: Specify the path to the pom.xml file using the -f flag
-        sh 'mvn clean package -f java-maven-sonar-argocd-helm-k8s/spring-boot-app/pom.xml' 
+        sh '''#!/bin/bash
+          set -e
+          echo "Current directory contents:"
+          ls -ltra
+          echo "Running mvn clean package (POM path: ${POM_PATH})"
+          # ensure stale sonar removed just before mvn as extra safety
+          rm -rf "${WORKSPACE}/${APP_DIR}/target/sonar" || true
+          mvn -B -f "${POM_PATH}" clean package
+        '''
       }
     }
     
@@ -40,8 +73,14 @@ pipeline {
       }
       steps {
         withCredentials([string(credentialsId: env.SONAR_CRED_ID, variable: 'SONAR_AUTH_TOKEN')]) {
-          // Analyze using the correct POM path
-          sh 'mvn sonar:sonar -Dsonar.login=$SONAR_AUTH_TOKEN -Dsonar.host.url=${SONAR_URL} -f java-maven-sonar-argocd-helm-k8s/spring-boot-app/pom.xml'
+          sh '''#!/bin/bash
+            set -e
+            echo "Removing any stale sonar dir before analysis"
+            rm -rf "${WORKSPACE}/${APP_DIR}/target/sonar" || true
+
+            echo "Running Sonar analysis (POM path: ${POM_PATH})"
+            mvn -B -f "${POM_PATH}" sonar:sonar -Dsonar.login=${SONAR_AUTH_TOKEN} -Dsonar.host.url="${SONAR_URL}"
+          '''
         }
       }
     }
@@ -49,41 +88,83 @@ pipeline {
     stage('Build and Push Docker Image') {
       steps {
         script {
-            // Build the image using the correct paths for Dockerfile and context
-            sh 'docker build -t ${DOCKER_IMAGE} -f java-maven-sonar-argocd-helm-k8s/spring-boot-app/Dockerfile java-maven-sonar-argocd-helm-k8s/spring-boot-app/'
-            
-            // FIX: Added 'https://' prefix to the registry URL
-            docker.withRegistry('https://index.docker.io/v1/', env.DOCKER_CRED_ID) {
-                docker.image("${DOCKER_IMAGE}").push()
-            }
+          sh '''#!/bin/bash
+            set -e
+            echo "Building docker image ${DOCKER_IMAGE} from ${APP_DIR}"
+            docker build -t "${DOCKER_IMAGE}" -f "${APP_DIR}/Dockerfile" "${APP_DIR}"
+          '''
+          // Push using withRegistry to ensure proper credential usage and protocol
+          docker.withRegistry('https://index.docker.io/v1/', env.DOCKER_CRED_ID) {
+            // push the build-number-tagged image
+            sh "docker push ${env.DOCKER_IMAGE}"
+            // optionally tag and push latest
+            sh '''
+              docker tag "${DOCKER_IMAGE}" "${DOCKER_IMAGE%:*}:latest" || true
+              docker push "${DOCKER_IMAGE%:*}:latest" || true
+            '''
+          }
         }
       }
     }
     
     stage('Update Deployment File') {
         environment {
-            GIT_REPO_NAME = "jenkins-projects" 
+            GIT_REPO_NAME = "jenkins-projects"
             GIT_USER_NAME = "pavani-2802"
             GIT_USER_EMAIL = "pavanikethari.28@gmail.com"
+            DEPLOY_FILE = "java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml"
         }
 
         steps {
             withCredentials([string(credentialsId: env.GITHUB_CRED_ID, variable: 'GITHUB_TOKEN')]) {
-                sh '''
-                    git config user.email "${GIT_USER_EMAIL}"
-                    git config user.name "PavaniKethari28"
-                    
-                    DEPLOY_FILE="java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml"
-                    # Use double quotes for sed to allow variable expansion
-                    sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" $DEPLOY_FILE
-                    
-                    git add $DEPLOY_FILE
+                sh '''#!/bin/bash
+                  set -e
+                  git config user.email "${GIT_USER_EMAIL}"
+                  git config user.name "${GIT_USER_NAME}"
+
+                  echo "Updating image tag in ${DEPLOY_FILE}"
+                  sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" "${DEPLOY_FILE}"
+
+                  # Only commit if there are changes
+                  if git diff --quiet -- "${DEPLOY_FILE}"; then
+                    echo "No changes to ${DEPLOY_FILE}; skipping commit/push"
+                  else
+                    git add "${DEPLOY_FILE}"
                     git commit -m "Update deployment image to version ${BUILD_NUMBER}"
-                    # Use HTTPS URL with token authentication for push
-                    git push https://${GITHUB_TOKEN}@github.com{GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:main
+                    echo "Pushing changes using token-authenticated HTTPS URL"
+                    git push "https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git" HEAD:main
+                  fi
                 '''
             }
         }
+    }
+  }
+
+  post {
+    always {
+      echo "Listing target directory contents for debugging (if exists)"
+      sh '''#!/bin/bash
+        ls -la "${WORKSPACE}/${APP_DIR}/target" || true
+      '''
+    }
+    failure {
+      echo "Build failed — printing ownership and lock diagnostics"
+      sh '''#!/bin/bash
+        echo "Target folder listing:"
+        ls -la "${WORKSPACE}/${APP_DIR}/target" || true
+
+        if [ -d "${WORKSPACE}/${APP_DIR}/target/sonar" ]; then
+          echo "Sonar folder listing:"
+          ls -la "${WORKSPACE}/${APP_DIR}/target/sonar" || true
+        fi
+
+        if command -v lsof >/dev/null 2>&1; then
+          echo "Processes holding sonar report (if present):"
+          lsof "${WORKSPACE}/${APP_DIR}/target/sonar/report-task.txt" || true
+        else
+          echo "lsof not available on this agent"
+        fi
+      '''
     }
   }
 }
