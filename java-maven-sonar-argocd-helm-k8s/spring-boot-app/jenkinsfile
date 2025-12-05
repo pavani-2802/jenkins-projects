@@ -7,7 +7,6 @@ pipeline
       args  '-v /var/run/docker.sock:/var/run/docker.sock --group-add 1000 -e DOCKER_CONFIG=/tmp/.docker'
     }
   }    
-}
    stages { 
         
         stage('Build Project') {
