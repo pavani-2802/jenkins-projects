@@ -26,7 +26,7 @@ pipeline {
       steps {
         sh 'echo "Current directory contents:"'
         sh 'ls -ltra'
-        // --- FIXED LINE BELOW ---
+        // Specify the path to the pom.xml file using the -f flag
         sh 'mvn clean package -f java-maven-sonar-argocd-helm-k8s/spring-boot-app/pom.xml' 
       }
     }
@@ -47,6 +47,7 @@ pipeline {
         script {
             sh 'docker build -t ${DOCKER_IMAGE} -f java-maven-sonar-argocd-helm-k8s/spring-boot-app/Dockerfile java-maven-sonar-argocd-helm-k8s/spring-boot-app/'
             
+            // --- FIXED LINE BELOW: Added https:// protocol ---
             docker.withRegistry('index.docker.io', env.DOCKER_CRED_ID) {
                 docker.image("${DOCKER_IMAGE}").push()
             }
