@@ -18,11 +18,6 @@ pipeline {
       APP_DIR = 'java-maven-sonar-argocd-helm-k8s/spring-boot-app'
     }
 
-  options {
-    timestamps()
-    ansiColor('xterm')
-  }
-
   stages {
     stage('Prepare workspace') {
       steps {
