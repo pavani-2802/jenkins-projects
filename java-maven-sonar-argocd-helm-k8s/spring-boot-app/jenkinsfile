@@ -1,6 +1,6 @@
 pipeline {
-  agent {
-       stage('Build') { 
+
+  agent any
     docker {
       image 'my-maven-docker:latest'
       // mount socket and set Docker config to /tmp/.docker (writable)
@@ -8,7 +8,6 @@ pipeline {
     }
     }
   }
-}
 
   environment {
     // Define docker image name (change registry/namespace as required)
