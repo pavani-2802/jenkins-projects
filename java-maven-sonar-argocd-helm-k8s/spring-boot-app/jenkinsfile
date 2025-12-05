@@ -3,7 +3,7 @@
     docker {
       image 'my-maven-docker:latest'
       // Mount Docker socket and explicitly use the 'docker' group for permissions
-      args '-v /var/run/docker.sock:/var/run/docker.sock --group root' 
+      args '--user 0:0 -v /var/run/docker.sock:/var/run/docker.sock' 
     }
   }
   
