@@ -47,6 +47,7 @@ pipeline {
                 // For example: def DOCKER_IMAGE = "pavanif5/jenkins-projects:${env.BUILD_NUMBER}"
 
                 // 1. Build the image
+                sh 'docker build -t my-repo/my-image:latest .'
                 sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && docker build -t ${DOCKER_IMAGE} .'
                 
                 // 2. Push the image using correct registry credentials
