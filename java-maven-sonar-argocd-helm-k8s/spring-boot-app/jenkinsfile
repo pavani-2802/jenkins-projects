@@ -1,10 +1,11 @@
-  pipeline {
+ pipeline {
   agent {
     docker {
       image 'my-maven-docker:latest'
       args '--user root -v /var/run/docker.sock:/var/run/docker.sock' // mount Docker socket to access the host's Docker daemon
     }
   }
+  stages {
     stage('Checkout') {
       steps {
         sh 'echo passed'
@@ -46,7 +47,7 @@
     }
     stage('Update Deployment File') {
         environment {
-            GIT_REPO_NAME = "Jenkins-Projects"
+            GIT_REPO_NAME = "jenkins-Projects"
             GIT_USER_NAME = "pavani-2802"
         }
         steps {
@@ -64,3 +65,4 @@
         }
     }
   }
+}
