@@ -2,7 +2,8 @@ pipeline {
   agent {
     docker {
       image 'my-maven-docker:latest'
-      args '-v /var/run/docker.sock:/var/run/docker.sock' // Host socket must be mounted on the Jenkins container as discussed
+      // mount socket and set Docker config to /tmp/.docker (writable)
+      args  '-v /var/run/docker.sock:/var/run/docker.sock --group-add ${HOST_DOCKER_GID} -e DOCKER_CONFIG=/tmp/.docker'
     }
   }
 
@@ -51,6 +52,9 @@ pipeline {
 
     stage('Build Docker Image') {
       steps {
+         sh 'mkdir -p /tmp/.docker && chmod 1777 /tmp/.docker || true'
+         // rest of docker commands
+          sh "docker build -t ${DOCKER_IMAGE} ."
         script {
           // Confirm docker client available
           sh 'docker --version || true'
