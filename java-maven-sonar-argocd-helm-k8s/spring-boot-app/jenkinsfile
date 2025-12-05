@@ -52,17 +52,21 @@ pipeline {
     }
 
     stage('Build Docker Image') {
-      steps {
-         sh 'mkdir -p /tmp/.docker && chmod 1777 /tmp/.docker || true'
-         // rest of docker commands
-          sh "docker build -t ${DOCKER_IMAGE} ."
-        script {
-          // Confirm docker client available
-          sh 'docker --version || true'
+         steps {
+    dir('java-maven-sonar-argocd-helm-k8s/spring-boot-app') {
+      // create safe docker config dir
+      sh 'mkdir -p /tmp/.docker && chmod 1777 /tmp/.docker || true'
 
-          // Build docker image from project folder
-          dir('java-maven-sonar-argocd-helm-k8s/spring-boot-app') {
-            sh "docker build -t ${DOCKER_IMAGE} ."
+      // Show versions (diagnostic)
+      sh 'docker --version || true'
+      sh 'docker version --format "Client API: {{.Client.APIVersion}}  Server API: {{.Server.APIVersion}}" || true'
+
+      // Disable buildkit (safer for debugging) and build from explicit Dockerfile
+      sh '''
+        export DOCKER_CONFIG=/tmp/.docker
+        export DOCKER_BUILDKIT=0
+        docker build -f Dockerfile -t pavanif5/jenkins-projects:${BUILD_NUMBER} .
+      '''
           }
         }
       }
