@@ -1,7 +1,7 @@
-pipeline
-
+pipeline {
   agent {
-    docker 'my-maven-docker:latest'
+    docker { 
+          image 'my-maven-docker:latest'
       // mount socket and set Docker config to /tmp/.docker (writable)
       args  '-v /var/run/docker.sock:/var/run/docker.sock --group-add 1000 -e DOCKER_CONFIG=/tmp/.docker'
     }
