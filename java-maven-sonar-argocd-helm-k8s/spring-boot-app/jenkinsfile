@@ -3,7 +3,8 @@ pipeline {
     docker {
       image 'my-maven-docker:latest'
       // mount socket and set Docker config to /tmp/.docker (writable)
-      args  '-v /var/run/docker.sock:/var/run/docker.sock --group-add ${HOST_DOCKER_GID} -e DOCKER_CONFIG=/tmp/.docker'
+      args  '-v /var/run/docker.sock:/var/run/docker.sock --group-add 1000 -e DOCKER_CONFIG=/tmp/.docker'
+    }
     }
   }
 
