@@ -2,7 +2,7 @@ pipeline {
   agent {
     docker {
       image 'my-maven-docker:latest'
-      args '--user root -v /var/run/docker.sock:/var/run/docker.sock' // mount Docker socket to access the host's Docker daemon
+      args '--user root -v /var/run/docker.sock:/var/run/docker.sock -e DOCKER_API_VERSION=1.41' // mount Docker socket to access the host's Docker daemon
     }
   }
   stages {
