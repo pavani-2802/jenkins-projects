@@ -29,12 +29,38 @@ pipeline {
         }
       }
     }
-    stage('Build and Push Docker Image') {
-      environment {
-        DOCKER_IMAGE = "pavanif5/jenkins-projects:${BUILD_NUMBER}"
-        // DOCKERFILE_LOCATION = "java-maven-sonar-argocd-helm-k8s/spring-boot-app/Dockerfile"
-        REGISTRY_CREDENTIALS = credentials('docker-cred')
+      stage('Build and Push Docker Image') {
+  steps {
+    script {
+      // ensure DOCKER_API_VERSION visible for docker client -> avoids "client too new" errors
+      // If you're using agent { docker { args ... } } ensure -e DOCKER_API_VERSION=1.41 is present there too.
+      sh '''#!/bin/bash
+        set -euo pipefail
+        echo "[BUILD] Docker API version: ${DOCKER_API_VERSION:-not-set}"
+        echo "[BUILD] Building docker image ${DOCKER_IMAGE} from ${APP_DIR}"
+        docker --version || true
+        docker build -t "${DOCKER_IMAGE}" -f "${APP_DIR}/Dockerfile" "${APP_DIR}"
+      '''
+      // Login and push using safe --password-stdin and Jenkins credentials
+      withCredentials([usernamePassword(credentialsId: env.DOCKER_CRED_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+        sh '''#!/bin/bash
+          set -euo pipefail
+          echo "[PUSH] Logging into Docker registry securely"
+          export DOCKER_API_VERSION=${DOCKER_API_VERSION:-1.41}
+          echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin https://index.docker.io/v1/
+
+          echo "[PUSH] Pushing ${DOCKER_IMAGE}"
+          docker push "${DOCKER_IMAGE}"
+          # tag and push latest (optional)
+          repo="${DOCKER_IMAGE%:*}"
+          echo "[PUSH] Tagging latest -> ${repo}:latest"
+          docker tag "${DOCKER_IMAGE}" "${repo}:latest" || true
+          docker push "${repo}:latest" || true
+        '''
       }
+    }
+  }
+}
       steps {
         script {
             sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && docker build -t ${DOCKER_IMAGE} .'
@@ -46,10 +72,72 @@ pipeline {
       }
     }
     stage('Update Deployment File') {
-        environment {
-            GIT_REPO_NAME = "Jenkins-projects"
-            GIT_USER_NAME = "pavani-2802"
-        }
+  environment {
+    GIT_REPO_NAME = "jenkins-projects"
+    GIT_USER_NAME = "pavani-2802"
+    GIT_USER_EMAIL = "pavanikethari.28@gmail.com"
+    DEPLOY_FILE = "java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml"
+    GIT_BRANCH = "main"
+  }
+  steps {
+    withCredentials([string(credentialsId: env.GITHUB_CRED_ID, variable: 'GITHUB_TOKEN')]) {
+      sh '''#!/bin/bash
+        set -euo pipefail
+        echo "[GIT] Configuring git user"
+        git config user.email "${GIT_USER_EMAIL}"
+        git config user.name "${GIT_USER_NAME}"
+
+        # Ensure we're on the correct branch (safe checkout)
+        # If workspace is a shallow checkout or detached, create branch from origin
+        git fetch origin || true
+        if git rev-parse --verify "${GIT_BRANCH}" >/dev/null 2>&1; then
+          git checkout "${GIT_BRANCH}"
+          git pull origin "${GIT_BRANCH}" || true
+        else
+          git checkout -b "${GIT_BRANCH}"
+        fi
+
+        # Replace image tag in the deployment file
+        echo "[GIT] Updating ${DEPLOY_FILE} with build number ${BUILD_NUMBER}"
+        if [ ! -f "${DEPLOY_FILE}" ]; then
+          echo "[GIT][ERROR] Deploy file not found: ${DEPLOY_FILE}"
+          ls -la $(dirname "${DEPLOY_FILE}") || true
+          exit 1
+        fi
+
+        sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" "${DEPLOY_FILE}"
+
+        # Only commit if something changed
+        if git diff --quiet -- "${DEPLOY_FILE}"; then
+          echo "[GIT] No changes to ${DEPLOY_FILE}; skipping commit/push"
+        else
+          git add "${DEPLOY_FILE}"
+          git commit -m "Update deployment image to version ${BUILD_NUMBER}"
+          # Use token-authenticated HTTPS remote for push
+          REMOTE_URL="https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git"
+          echo "[GIT] Setting remote URL to token-authenticated endpoint (remote hidden)"
+          git remote set-url origin "${REMOTE_URL}" || git remote add origin "${REMOTE_URL}"
+          echo "[GIT] Pushing to origin ${GIT_BRANCH}"
+          # push with explicit refspec; if protected branch requires PR, this will fail and we will show diagnostics
+          git push origin HEAD:${GIT_BRANCH} --follow-tags
+        fi
+      '''
+    }
+  }
+  post {
+    failure {
+      // helpful diagnostics on failure
+      sh '''#!/bin/bash
+        echo "[GIT][DIAG] git status:"
+        git status --porcelain -b || true
+        echo "[GIT][DIAG] git remote -v:"
+        git remote -v || true
+        echo "[GIT][DIAG] last commit:"
+        git --no-pager log -1 --pretty=fuller || true
+      '''
+    }
+  }
+}
         steps {
             withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
                 sh '''
